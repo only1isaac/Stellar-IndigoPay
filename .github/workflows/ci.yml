@@ -133,8 +133,6 @@ jobs:
     # Informational only — never blocks a PR merge.
     # Change to `continue-on-error: false` once the backend is stable in CI.
     continue-on-error: true
-    # Only run on pushes/PRs that touch backend or load-test scripts so we
-    # don't pay the cost on unrelated changes.
     needs: [backend]
     steps:
       - uses: actions/checkout@v4
@@ -153,10 +151,16 @@ jobs:
 
       - name: Start backend stack
         run: |
-          docker compose -f docker-compose.test.yml up -d
-          # Wait up to 60 s for the backend health endpoint to respond
-          timeout 60 bash -c \
-            'until curl -sf http://localhost:4000/api/health > /dev/null; do sleep 2; done'
+          # docker-compose.perf.yml starts postgres + redis + the backend as a
+          # real HTTP server (target: runner).  This is intentionally separate
+          # from docker-compose.test.yml, which runs `npm test` and exits.
+          docker compose -f docker-compose.perf.yml up -d --build
+
+          # Wait for the backend's own Docker healthcheck to pass (up to 90 s).
+          timeout 90 bash -c \
+            'until [ "$(docker inspect --format="{{.State.Health.Status}}" \
+              $(docker compose -f docker-compose.perf.yml ps -q backend))" = "healthy" ]; \
+            do sleep 3; done'
 
       - name: Run CI performance smoke test
         run: |
@@ -178,4 +182,4 @@ jobs:
 
       - name: Stop backend stack
         if: always()
-        run: docker compose -f docker-compose.test.yml down -v
+        run: docker compose -f docker-compose.perf.yml down -v
