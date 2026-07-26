@@ -2,6 +2,11 @@
 
 ### Performance
 
+* **ci:** add k6 performance smoke test job to CI for donation recording pipeline regression detection (closes #043)
+  - New `scripts/load-test-ci.js`: 10 VUs, 30 s duration, p95 < 2 s threshold, success rate > 95 %
+  - New `performance_smoke` job in `.github/workflows/ci.yml` with `continue-on-error: true` (informational, never blocks merge)
+  - Job runs after the `backend` job, starts the backend via `docker-compose.test.yml`, uploads `k6-results.json` as a CI artifact
+
 * **frontend:** optimize Core Web Vitals with next/image, next/font, and bundle splitting (closes #261)
   - Migrate project images in `ProjectCard.tsx` and `projects/[id].tsx` to `next/image` with proper `sizes`, `priority`, and lazy loading
   - Configure `next/font` with Inter and Plus Jakarta Sans via CSS variables, removing render-blocking Google Fonts CSS

@@ -126,3 +126,60 @@ jobs:
             report.json
           retention-days: 14
           if-no-files-found: warn
+
+  performance_smoke:
+    name: Performance Smoke Test (k6)
+    runs-on: ubuntu-latest
+    # Informational only — never blocks a PR merge.
+    # Change to `continue-on-error: false` once the backend is stable in CI.
+    continue-on-error: true
+    needs: [backend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+
+      - name: Start backend stack
+        run: |
+          # docker-compose.perf.yml starts postgres + redis + the backend as a
+          # real HTTP server (target: runner).  This is intentionally separate
+          # from docker-compose.test.yml, which runs `npm test` and exits.
+          docker compose -f docker-compose.perf.yml up -d --build
+
+          # Wait for the backend's own Docker healthcheck to pass (up to 90 s).
+          timeout 90 bash -c \
+            'until [ "$(docker inspect --format="{{.State.Health.Status}}" \
+              $(docker compose -f docker-compose.perf.yml ps -q backend))" = "healthy" ]; \
+            do sleep 3; done'
+
+      - name: Run CI performance smoke test
+        run: |
+          k6 run \
+            --env BASE_URL=http://localhost:4000 \
+            --out json=k6-results.json \
+            scripts/load-test-ci.js
+        # k6 exits non-zero when a threshold is breached; continue-on-error
+        # above ensures the job stays informational even on threshold failures.
+
+      - name: Upload k6 results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-performance-results
+          path: k6-results.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Stop backend stack
+        if: always()
+        run: docker compose -f docker-compose.perf.yml down -v

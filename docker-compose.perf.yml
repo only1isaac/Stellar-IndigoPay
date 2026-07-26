@@ -1,0 +1,63 @@
+# docker-compose.perf.yml
+#
+# Minimal stack for the CI performance smoke test (scripts/load-test-ci.js).
+#
+# Unlike docker-compose.test.yml, this file starts the backend as a real
+# HTTP server (not a one-shot test runner) so k6 can send requests to it.
+#
+# Usage (CI only — not for local development):
+#   docker compose -f docker-compose.perf.yml up -d
+#   k6 run --env BASE_URL=http://localhost:4000 scripts/load-test-ci.js
+#   docker compose -f docker-compose.perf.yml down -v
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: indigopay_perf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d indigopay_perf"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # "runner" is the production stage — a long-lived HTTP server.
+      # "test" (used by docker-compose.test.yml) runs npm test and exits.
+      target: runner
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/indigopay_perf
+      REDIS_URL: redis://redis:6379
+      STELLAR_NETWORK: testnet
+      HORIZON_URL: https://horizon-testnet.stellar.org
+      ALLOWED_ORIGINS: http://localhost:4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
